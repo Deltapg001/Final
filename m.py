@@ -181,7 +181,7 @@ def handle_bgmi(message):
                     record_command_logs(user_id, '/bgmi', target, port, time_val)
                     log_command(user_id, target, port, time_val)
                     start_attack_reply(message, target, port, time_val)
-                    full_command = f"./megoxer  {target} {port} {time_val} 150"
+                    full_command = f"./megoxer  {target} {port} {time_val}"
                     subprocess.run(full_command, shell=True)
                     response = f"𝐂𝐇𝐔𝐃𝐀𝐈 FINISHED 🎮\n𝐓𝐚𝐫𝐠𝐞𝐭: {target}\n𝐏𝐨𝐫𝐭: {port}\n𝐓𝐢𝐦𝐞: {time_val} 𝐒𝐞𝐜𝐨𝐧𝐝𝐬"
             except ValueError:
