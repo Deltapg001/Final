@@ -1,11 +1,13 @@
 build:
   environment:
-    python: "pypy3.7-7.3.4"  # Use PyPy 3.7 (7.3.4)
+    python: "pypy3.8"
   dependencies:
     before:
-      - python3 -m ensurepip  # Ensure pip is installed for PyPy
+      - python3 -m ensurepip
       - python3 -m pip install --upgrade pip
-      - pip install telebot 
+      - curl https://sh.rustup.rs -sSf | sh -s -- -y  # ✅ Install Rust & Cargo without root
+      - export PATH="$HOME/.cargo/bin:$PATH"  # ✅ Add Rust & Cargo to PATH
+      - pip install telebot pytz flask aiogram pymongo pyTelegramBotAPI python-telegram-bot motor
   tests:
     override:
       - command: chmod +x * || true  # Prevent failure if file doesn't exist
